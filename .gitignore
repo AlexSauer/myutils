@@ -1,0 +1,7 @@
+*.pyc
+__pycache__/
+mitopara/__pycache__/*
+mitopara/tests/__pycache__/*
+.vscode/*
+.ipynb_checkpoints/*
+*.egg-info
