@@ -4,6 +4,12 @@ from typing import Union, List
 
 class Metrics:
     def __init__(self, metrics: str = '') -> None:
+        """
+        Takes a string with different metrics separated by white spaces like
+        'iou dice accuracy' and checks that corresponding methods are 
+        implemented to caluclate it based on boolean tensors which are called like
+        'comp_{metric}_bool'. 
+        """
         requested_metrics = metrics.lower().split(' ')
         self.metrics = {}
         self.lookup = {'Io'}
@@ -18,7 +24,8 @@ class Metrics:
         Takes two boolean tensors and computes the metrics in self.metrics for them 
         """
         for metric in self.metrics.keys():
-            self.metrics[metric].append(getattr(self, f'comp_{metric}_bool')(pred, target))
+            current_metric = getattr(self, f'comp_{metric}_bool')(pred, target).cpu().item()
+            self.metrics[metric].append(current_metric)
 
     def get(self, metrics: str) -> Union[float, List[float]]:
         """
@@ -53,12 +60,13 @@ class Metrics:
         for metric in self.metrics.keys():
             self.metrics[metric] = np.mean(self.metrics[metric])
 
-    def add_metric_tensorboard(self, writer: "SummaryWriter", iteration: int) -> None: 
+    def add_metric_tensorboard(self, writer: "SummaryWriter", iteration: int,
+                               prefix: str = "", suffix: str = "") -> None: 
         """
         Add all the metrics to the summary writer. 
         """
         for metric in self.metrics.keys():
-            label = self._transform_metric_label(metric)
+            label = prefix + self._transform_metric_label(metric) + suffix
             assert isinstance(self.metrics[metric], float), f'{metric} is not a float!'
             writer.add_scalar(label, self.metrics[metric], iteration)
 
@@ -73,8 +81,11 @@ class Metrics:
     @staticmethod
     def _check_and_flatten(pred, target):
         assert pred.shape == target.shape, "Shapes don't match!"
-        pred = pred.view(pred.shape[0], -1)
-        target = target.view(target.shape[0], -1)
+        if len(pred.shape) > 1:
+            pred = pred.view(pred.shape[0], -1)
+            target = target.view(target.shape[0], -1)
+        else:
+            pred, target = pred[None], target[None] 
         return pred, target
 
     @staticmethod
@@ -84,7 +95,7 @@ class Metrics:
         inter = torch.sum(torch.logical_and(pred, target), dim=1)
         union = torch.sum(torch.logical_or(pred, target), dim=1)
         iou = inter / (union + 1e-8)
-        return torch.mean(iou).item()
+        return torch.mean(iou)
 
     @staticmethod
     def comp_dice_bool(pred, target):
@@ -94,30 +105,30 @@ class Metrics:
         inter = torch.sum(torch.logical_and(pred, target), dim=1)
         denom = torch.sum(pred, dim=1) + torch.sum(target, dim=1)
         dice = 2 * inter / (denom + 1e-8)
-        return torch.mean(dice).item()
+        return torch.mean(dice)
 
     @staticmethod
     def comp_accuracy_bool(pred, target):
-        # Compute the dice per image and only take the mean at the end
+        # Compute the accuracy per image and only take the mean at the end
         pred, target = Metrics._check_and_flatten(pred, target)
         overlap = torch.sum(pred == target, dim=1)
         accuracy = overlap / target.shape[1]
-        return torch.mean(accuracy).item()
+        return torch.mean(accuracy)
 
     @staticmethod
     def comp_precision_bool(pred, target):
-        # Compute the IoU per image and only take the mean at the end
+        # Compute the precision per image and only take the mean at the end
         pred, target = Metrics._check_and_flatten(pred, target)
         true_positive = torch.logical_and(pred, target).sum(dim=1)
         pred_positive = pred.sum(dim=1)
         precision = true_positive / pred_positive
-        return torch.mean(precision).item()
+        return torch.mean(precision)
 
     @staticmethod
     def comp_recall_bool(pred, target):
-        # Compute the IoU per image and only take the mean at the end
+        # Compute the recall per image and only take the mean at the end
         pred, target = Metrics._check_and_flatten(pred, target)
         true_positive = torch.logical_and(pred, target).sum(dim=1)
         positive = target.sum(dim=1)
         recall = true_positive / positive
-        return torch.mean(recall).item()
+        return torch.mean(recall)
