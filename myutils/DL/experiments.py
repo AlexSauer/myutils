@@ -40,8 +40,7 @@ class HyperparameterSearch:
     paraJ: [v1, v2, v3, ..., VL]
     
     and will then go through the values provided in the extension
-    file and run main with these parameters. (No grid search at the moment,
-    i.e in the example above there would be M+L runs instead of M*L)
+    file and run main with these parameters.
     One parameter has to be device_id which specifies an integer
     that will be used to select a GPU.
     """
@@ -84,8 +83,10 @@ class HyperparameterSearch:
         return experiment_parameter_deque
 
     @staticmethod
-    def run(func: Callable, experiment_parameter_deque: Deque[ExperimentParameter], timeout: int = 30,
-            grid_serach: bool = False, max_processes: int = 4) -> None:
+    def run(func: Callable, 
+            experiment_parameter_deque: Deque[ExperimentParameter], 
+            timeout: int = 30,
+            max_processes: int = 4) -> None:
         node = gpu.Node()
         counter = 1
         processes = []
