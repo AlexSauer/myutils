@@ -30,10 +30,10 @@ class CustModule(nn.Module):
 
 
 class ConvLayer(CustModule):
-    def __init__(self, in_c: int, out_c: int, type: int = '2D'):
+    def __init__(self, in_c: int, out_c: int, type: int = '2D', first_kernel=3, first_stride=1, first_padding=1):
         super().__init__(type)
         self.layers = nn.Sequential(
-            self.Conv(in_c, out_c, kernel_size = 3,  stride=1, padding= 1),
+            self.Conv(in_c, out_c, kernel_size=first_kernel, stride=first_stride, padding=first_padding),
             self.BatchNorm(out_c),
             nn.ReLU(inplace = True),
             self.Conv(out_c, out_c, kernel_size=3, stride=1, padding=1),
@@ -75,7 +75,9 @@ class Encoder(CustModule):
         super().__init__(type)
         self.channels = channels
         self.depth_downsample = depth_downsample if (type == '3D' and depth_downsample is not None) else [True] * (len(channels)-2)
-        self.layers = nn.ModuleList([ConvLayer(in_c= self.channels[0], out_c=self.channels[1], type = type)])
+        self.layers = nn.ModuleList([
+            ConvLayer(in_c= self.channels[0], out_c=self.channels[1], type = type, first_kernel=7, first_stride=2, first_padding=3)
+            ])
         # Shift channels by one and zip to generate down-sampling path
         for in_c, out_c, depth_down in zip(self.channels[1:], self.channels[2:], self.depth_downsample):
             self.layers.append(DownLayer(in_c, out_c, type, depth_down))
@@ -93,18 +95,19 @@ class UpLayer(CustModule):
     First upsamples the input by a factor of 2, concats the skip-connection and outputs it through another Conv-Layer
     """
     def __init__(self, in_c: int, concat_c: int,  out_c: int, type: str = '2D', 
-                 depth_upsample: bool = True, interpolate: bool = True):
+                 depth_upsample: bool = True, interpolate: bool = True, dropout: bool = True):
         super().__init__(type)
+        cur_dropout = nn.Dropout(p=0.25) if dropout else nn.Identity()
         if interpolate:
             self.upsample = partial(F.interpolate, scale_factor=2, mode="nearest")
             self.layers = nn.Sequential(
-                nn.Dropout(p = 0.25),
+                cur_dropout,
                 ConvLayer(in_c + concat_c, out_c, type)
             )
         else:
             self.upsample = self.ConvTranspose(in_c, out_c, **self.convTransParam(type, depth_upsample))
             self.layers = nn.Sequential(
-                nn.Dropout(p = 0.25),
+                cur_dropout,
                 ConvLayer(out_c + concat_c, out_c, type)
             )
 
@@ -117,12 +120,14 @@ class UpLayer(CustModule):
 
 class Decoder(CustModule):
     def __init__(self, channels: Iterable[int], enc_channels: Iterable[int], 
-                 type: str = '2D', depth_upsample: Optional[Iterable[int]] = None, interpolate = False) -> None:
+                 type: str = '2D', depth_upsample: Optional[Iterable[int]] = None, interpolate = False,
+                 dropout: bool = True) -> None:
         super().__init__(type)
         assert channels[0] == enc_channels[-1],\
             "Decoder has to start with the same number of channels as encoder ends"
         self.channels = channels
-        self.enc_channels = enc_channels[-2:0:-1]  # Reverse and exclude the first entry and last
+        # self.enc_channels = enc_channels[-2:0:-1]  # Reverse and exclude the first entry and last
+        self.enc_channels = enc_channels[-2::-1]  # Reverse and exclude the last entry
         self.depth_upsample = depth_upsample[::-1] if (type == '3D' and depth_upsample is not None) \
                                                    else [True] * (len(channels) - 1)
 
@@ -133,7 +138,8 @@ class Decoder(CustModule):
                                        out_c=out_c, 
                                        type=type, 
                                        depth_upsample=d_upsample, 
-                                       interpolate=interpolate))
+                                       interpolate=interpolate,
+                                       dropout=dropout))
 
     def forward(self, features: torch.Tensor) -> torch.Tensor:
         """
@@ -152,8 +158,11 @@ class UNet(nn.Module):
     Decoder has to start with the same number of channels as encoder ends
     """
     def __init__(self, encoder_channels: Iterable[int], decoder_channels: Iterable[int], type: str = '3D',
-                 depth_downsample: Optional[Iterable[int]] = None, interpolate: bool = False,
+                 depth_downsample: Optional[Iterable[int]] = None, interpolate: bool = False, dropout: bool = True,
                  device: Optional[str] = None) -> None:
+        """
+        This UNet has a ResNet like first layer, that already downsamples by having a stride of 2 in the first layer. 
+        """
         super().__init__()
         self.depth_downsampling = depth_downsample
 
@@ -163,9 +172,9 @@ class UNet(nn.Module):
         # Build model
         self.output_dim = decoder_channels[-1]
         self.encoder = Encoder(encoder_channels, type, depth_downsample)
-        self.decoder = Decoder(decoder_channels[:(len(encoder_channels)-1)], encoder_channels, type, depth_downsample, interpolate)
+        self.decoder = Decoder(decoder_channels[:(len(encoder_channels))], encoder_channels, type, depth_downsample, interpolate, dropout)
         # Use the layers not used in the U-architecture for the final layers
-        self.final = FinalLayer(channels =decoder_channels[(len(encoder_channels)-2):], include_sig=False, type = type)
+        self.final = FinalLayer(channels =decoder_channels[(len(encoder_channels)-1):], include_sig=False, type = type)
 
         # Set device
         self.device = device
@@ -173,7 +182,7 @@ class UNet(nn.Module):
             self.to(self.device)
 
     def forward(self, x):
-        features = self.encoder(x)
+        features = [x] + self.encoder(x)
         features = self.decoder(features)
         return self.final(features)
 
@@ -202,29 +211,17 @@ class UNet(nn.Module):
 if __name__ == '__main__':
     from myutils.DL.Debugging import VerboseExecution
 
-    class VerboseExecution(nn.Module):
-        def __init__(self, model: nn.Module) -> None:
-            super().__init__()
-            self.model = model
-
-            for name, layer in self.model.layers.named_children():
-                layer.__name__ = name
-                layer.register_forward_hook(
-                    lambda layer, _, output: print(f"{layer.__name__}: {output.shape}")
-                )
-
-        def forward(self, x: torch.Tensor) -> torch.Tensor:
-            return self.model(x)
-            
 
     encoder_channels=[1, 64, 128, 256, 512]
-    decoder_channels=[512, 256, 128, 64, 1]
+    decoder_channels=[512, 256, 128, 64, 32, 1]
     unet = UNet(encoder_channels, decoder_channels, type='2D')
 
 
     x = torch.randn((4, 1, 64, 64))
-    
-    features = VerboseExecution(unet.encoder)(x)
+    features = [x] + VerboseExecution(unet.encoder, 'layers' )(x)
+    print([u.shape for u in features])
+    res = VerboseExecution(unet.decoder, 'layers')(features)
+    _ = unet(x)
 
 
 
