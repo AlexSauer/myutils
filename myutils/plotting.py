@@ -5,7 +5,9 @@ from einops import rearrange
 
 def img_plot(img: np.array, 
              batch_element: int = 0,
-             ignore_RGB: bool = False) -> None:
+             ignore_RGB: bool = False,
+             ax= None,
+             **kwargs) -> None:
     """
     Simple interface to plt.imshow in order to plot an example 
     from a batch of images
@@ -18,7 +20,7 @@ def img_plot(img: np.array,
 
     # Transform a possbile torch.Tensor to np.array
     if type(img).__name__ == 'Tensor':
-        img = img.cpu().numpy()
+        img = img.detach().cpu().numpy()
     assert isinstance(img, np.ndarray), f'Unknown type for img: {type(img)}'
     
     # Cases: [B, C, H, W] 
@@ -38,6 +40,10 @@ def img_plot(img: np.array,
 
         # Channel could also be a 1 (as we need the channel for deep learning)
         img = img.squeeze()
-
-    plt.imshow(img)
+    
+    if ax is None:
+        plt.imshow(img, **kwargs)
+    else:
+        ax.imshow(img, **kwargs)
     plt.show()
+    
