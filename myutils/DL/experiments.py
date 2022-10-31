@@ -6,7 +6,7 @@ from typing import Tuple, Optional, Deque, Callable
 from datetime import datetime
 from collections import deque
 import itertools
-import gputils as gpu
+from myutils.gputils.Node import Node
 
 
 @dataclass
@@ -63,7 +63,7 @@ class BaseExperiment:
         For each processes it uses an idle GPU and waits as long until it can find one
         but a minimum of <timeout> second.
         """
-        node = gpu.Node()
+        node = Node()
         counter = 1
         processes = []
         gpus_allocated = []
